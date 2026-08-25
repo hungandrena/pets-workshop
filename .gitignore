@@ -49,3 +49,6 @@ app/server/e2e_test_dogshelter.db
 
 # azure
 .azure
+
+# claude code pipeline scratch (per-session agent state)
+.claude/.pipeline-state.json
