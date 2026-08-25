@@ -20,6 +20,24 @@ else
   echo "==> no root package.json; skipping npm lint/test"
 fi
 
+if [ -x scripts/hello.sh ]; then
+  echo "==> scripts/hello.sh smoke check"
+  if out=$(./scripts/hello.sh 2>&1); then
+    if [ -n "$out" ]; then
+      echo "OK: hello.sh exited 0 and printed: ${out}"
+    else
+      echo "FAIL: hello.sh exited 0 but printed nothing."
+      status=1
+    fi
+  else
+    echo "FAIL: hello.sh exited $? instead of 0. Output:"
+    printf '%s\n' "$out" | sed 's/^/  /'
+    status=1
+  fi
+else
+  echo "==> no executable scripts/hello.sh; skipping smoke check"
+fi
+
 # The marker is spliced from two string literals so that this script never
 # matches itself.
 marker="TODO""(pipeline)"

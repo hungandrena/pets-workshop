@@ -5,4 +5,6 @@
 
 set -euo pipefail
 
-echo "Hello from the pets workshop!"
+greeting="Hello from the pets workshop!"
+
+echo "$greting"
