@@ -1,7 +1,8 @@
 import os
 from typing import Dict, List, Any, Optional
 from flask import Flask, jsonify, request, Response
-from models import init_db, db, Dog, Breed
+from sqlalchemy import func
+from models import init_db, db, Dog, Breed, AdoptionStatus
 
 # Get the server directory path
 base_dir: str = os.path.abspath(os.path.dirname(__file__))
@@ -14,19 +15,50 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Initialize the database with the app
 init_db(app)
 
+def _parse_status(raw: str) -> AdoptionStatus:
+    """Resolve a status query value, case-insensitively, to an AdoptionStatus.
+
+    Raises ValueError when the value names no member, so the caller can answer
+    400 rather than letting the lookup surface as a 500.
+    """
+    try:
+        return AdoptionStatus[raw.strip().upper()]
+    except KeyError:
+        raise ValueError(raw)
+
+
 @app.route('/api/dogs', methods=['GET'])
-def get_dogs() -> Response:
+def get_dogs() -> tuple[Response, int] | Response:
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 6, type=int)
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
+
+    status_arg: Optional[str] = request.args.get('status')
+    breed_arg: Optional[str] = request.args.get('breed')
 
     query = db.session.query(
         Dog.id, 
         Dog.name, 
         Breed.name.label('breed')
     ).join(Breed, Dog.breed_id == Breed.id)
-    
+
+    if status_arg is not None:
+        try:
+            status = _parse_status(status_arg)
+        except ValueError:
+            accepted = ', '.join(member.name for member in AdoptionStatus)
+            return jsonify({
+                'error': f"Unknown status '{status_arg}'. Accepted values are: {accepted}."
+            }), 400
+        query = query.filter(Dog.status == status)
+
+    # TODO(pipeline) revisit whether breed should match on id as well
+    if breed_arg is not None:
+        query = query.filter(func.lower(Breed.name) == breed_arg.strip().lower())
+
+    # Counted after the filters are applied, so total and total_pages describe
+    # the filtered set and paging through a filtered list terminates.
     total = query.count()
     dogs_query = query.offset((page - 1) * per_page).limit(per_page).all()
     
