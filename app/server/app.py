@@ -53,7 +53,6 @@ def get_dogs() -> tuple[Response, int] | Response:
             }), 400
         query = query.filter(Dog.status == status)
 
-    # TODO(pipeline) revisit whether breed should match on id as well
     if breed_arg is not None:
         query = query.filter(func.lower(Breed.name) == breed_arg.strip().lower())
 
