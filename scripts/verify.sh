@@ -20,6 +20,27 @@ else
   echo "==> no root package.json; skipping npm lint/test"
 fi
 
+if [ -f app/server/test_app.py ]; then
+  echo "==> python unit tests (app/server)"
+  if command -v python3 >/dev/null 2>&1; then
+    # Deliberately not guarded by an import check: a missing dependency must
+    # fail the build rather than quietly skip the only test of the API.
+    if (cd app/server && python3 -m unittest discover); then
+      echo "OK: python unit tests passed."
+    else
+      echo "FAIL: python unit tests failed."
+      echo "      If this is an import error, install the dependencies:"
+      echo "        pip install -r app/server/requirements.txt"
+      status=1
+    fi
+  else
+    echo "FAIL: python3 not found, so app/server/test_app.py cannot run."
+    status=1
+  fi
+else
+  echo "==> no app/server/test_app.py; skipping python tests"
+fi
+
 if [ -x scripts/hello.sh ]; then
   echo "==> scripts/hello.sh smoke check"
   if out=$(./scripts/hello.sh 2>&1); then
