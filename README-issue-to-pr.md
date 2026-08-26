@@ -44,8 +44,9 @@ by convention, so an agent cannot skip a step even if it wants to.
 | Artifact | Entry point | What it enforces |
 |---|---|---|
 | `.claude/hooks/gate-pr-create.js` | `PreToolUse` on `Bash` | No PR without requirements. Blocks any command containing `gh pr create` unless `.llm/issue-<n>.md` exists for the issue named by the branch. |
-| `.claude/hooks/watch-pr-pipeline.js` | `PostToolUse` on `Bash` | The PR cannot be forgotten. Any Bash output containing a PR URL is recorded to `.claude/.pipeline-state.json` and the agent is told to run `gh pr checks <n> --watch`. |
+| `.claude/hooks/watch-pr-pipeline.js` | `PostToolUse` on `Bash` | The PR cannot be forgotten. Any Bash output containing a PR URL is recorded to `.claude/.pipeline-state.json` and the agent is told to run `gh pr checks <n> --watch`. Also records red verdicts it sees and posts the audit trail (see below). |
 | `.claude/hooks/pipeline-loop.js` | `Stop` | The agent cannot stop on a red or unknown build. Reads the CI verdict: pending → block, failed → block with the failing log tail (max 3 auto-fix attempts), green → print the handoff and allow the stop. Also writes the audit trail to the PR (see below). |
+| `.claude/hooks/lib/pipeline.js` | required by both | Shared plumbing: state, git and `gh` calls, and the audit-trail comment bodies. Two hooks write the same trail, so the logic lives in one place rather than being kept in sync by hand. |
 | `.claude/skills/issue-to-pr/SKILL.md` | `/issue-to-pr` | The happy path, as literal commands. Orchestration only — the hooks are the enforcement. |
 | `.github/workflows/pr.yml` + `scripts/verify.sh` | GitHub Actions | A real, tiny, *failable* verdict for the loop to react to. |
 
@@ -66,13 +67,28 @@ could say is already visible in the PR body or the checks widget.
 
 **1. After each auto-fix — the failure paired with the diff that answered it.**
 
-When CI is red the hook cannot yet know *how* the agent will fix it, so it records the
-failure plus the current HEAD sha in `lastFailure` and posts nothing. On the next loop
-re-entry, if HEAD has moved, it posts one comment containing the failing log tail *and*
-`git log --oneline` + `git diff --stat` for exactly what was pushed in response, then
-clears `lastFailure`. That pairing is the point: it is what shows a reviewer whether the
-agent fixed the cause or quietly weakened `verify.sh`. If HEAD has not moved, nothing is
-posted — there is nothing honest to report yet.
+When CI is red the hooks cannot yet know *how* the agent will fix it, so they record the
+failure plus the current HEAD sha in `lastFailure` and post nothing. On the next event, if
+HEAD has moved, one comment goes out containing the failing log tail *and*
+`git log --oneline` + `git diff --stat` for exactly what was pushed in response, and
+`lastFailure` is cleared. That pairing is the point: it is what shows a reviewer whether
+the agent fixed the cause or quietly weakened `verify.sh`. If HEAD has not moved, nothing
+is posted — there is nothing honest to report yet.
+
+**Both hooks record and flush, and that is not redundancy.** The Stop hook only ever sees
+a build the agent actually *stops* on. An agent that runs `gh pr checks --watch`, reads
+the log, fixes and pushes inside a single turn never stops, so the Stop hook never
+observes the red build at all — attempts stays 0 and the trail stays empty. That is not
+hypothetical; it is what the first real run of this pipeline did. The PostToolUse hook
+therefore also watches Bash output for a `gh pr checks` table reporting a failure, and
+flushes on any later Bash call once HEAD has moved. The Stop hook additionally owns the
+attempt number, which is why its comments are headed `Auto-fix attempt 2/3` while the
+PostToolUse ones are headed just `Auto-fix`: it knows the budget, the other does not, and
+neither invents a number it cannot know.
+
+`recordFailure` refuses to overwrite a failure that has not been reported yet, so the
+pairing always describes the *first* unanswered failure rather than the most recent one,
+whichever hook happens to see it.
 
 **2. On an exhausted auto-fix budget — the human handoff point.**
 
@@ -94,6 +110,11 @@ poll on human input and break the rule that the pipeline ends at a green PR.
   hook is designed to do nothing instead.
 - **Comments never gate anything.** The two PR comments are an audit trail for the human,
   not a control channel. Nothing reads them back, and posting failures are swallowed.
+- **State is merged, never rebuilt.** Every write spreads the previous state. An earlier
+  version of the PostToolUse hook rewrote it as `{pr, attempts, url, branch}`, so any
+  `gh pr view` — or merely printing the state file, whose contents include the PR URL —
+  silently dropped `lastFailure` and `handoffPosted`. Only a change of PR number resets
+  the budget and the trail, and it does so deliberately.
 - **Never merges.** Nothing in the hooks, the skill, the workflow, or `verify.sh` invokes
   `gh pr merge` or passes `--auto`. The only occurrences of those strings anywhere are the
   sentences forbidding them.
